@@ -6,6 +6,7 @@ import Foundation
 A collection of helper functions for saving text and data in the keychain.
 
 */
+@available(iOS 11.3, *)
 open class KeychainSwift {
   
   var lastQueryParameters: [String: Any]? // Used by the unit tests
@@ -61,10 +62,10 @@ open class KeychainSwift {
   */
   @discardableResult
   open func set(_ value: String, forKey key: String,
-                  withAccess access: KeychainSwiftAccessOptions? = nil) -> Bool {
+		withAccess access: KeychainSwiftAccessOptions? = nil, andBiometry biometry: Bool = false) -> Bool {
     
     if let value = value.data(using: String.Encoding.utf8) {
-      return set(value, forKey: key, withAccess: access)
+      return set(value, forKey: key, withAccess: access, andBiometry: biometry)
     }
     
     return false
@@ -77,14 +78,50 @@ open class KeychainSwift {
   - parameter key: Key under which the data is stored in the keychain.
   - parameter value: Data to be written to the keychain.
   - parameter withAccess: Value that indicates when your app needs access to the text in the keychain item. By default the .AccessibleWhenUnlocked option is used that permits the data to be accessed only while the device is unlocked by the user.
-  
+  - parameter andBiometry: Set to true if entry should be encrypted using biometry.
+
   - returns: True if the text was successfully written to the keychain.
   
   */
   @discardableResult
   open func set(_ value: Data, forKey key: String,
-    withAccess access: KeychainSwiftAccessOptions? = nil) -> Bool {
-    
+		withAccess access: KeychainSwiftAccessOptions? = nil, andBiometry biometry: Bool = false) -> Bool {
+
+    let accessible = access?.value ?? KeychainSwiftAccessOptions.defaultOption.value
+
+    var accessQuery: [String : Any]
+    if biometry {
+      var error: Unmanaged<CFError>? = nil
+      guard let accessControl =
+              SecAccessControlCreateWithFlags(nil, accessible as CFString, .biometryCurrentSet, &error)
+      else { return false }
+
+      accessQuery = [
+        kSecAttrAccessControl as String : accessControl
+      ]
+    } else {
+      accessQuery = [
+        KeychainSwiftConstants.accessible : accessible
+      ]
+    }
+
+    return set(value, forKey: key, withAccessQuery: accessQuery)
+  }
+
+  /**
+
+  Stores the data in the keychain item under the given key.
+
+  - parameter key: Key under which the data is stored in the keychain.
+  - parameter value: Data to be written to the keychain.
+  - parameter withAccessQuery: Dictionary containing desired accessible and access control attributes.
+  - parameter andBiometry: Set to true if entry should be encrypted using biometry.
+
+  - returns: True if the text was successfully written to the keychain.
+
+  */
+  @discardableResult
+  private func set(_ value: Data, forKey key: String, withAccessQuery accessQuery: [String : Any]) -> Bool {
     // The lock prevents the code to be run simultaneously
     // from multiple threads which may result in crashing
     lock.lock()
@@ -92,16 +129,15 @@ open class KeychainSwift {
     
     deleteNoLock(key) // Delete any existing key before saving it
 
-    let accessible = access?.value ?? KeychainSwiftAccessOptions.defaultOption.value
-      
     let prefixedKey = keyWithPrefix(key)
       
     var query: [String : Any] = [
       KeychainSwiftConstants.klass       : kSecClassGenericPassword,
       KeychainSwiftConstants.attrAccount : prefixedKey,
-      KeychainSwiftConstants.valueData   : value,
-      KeychainSwiftConstants.accessible  : accessible
+      KeychainSwiftConstants.valueData   : value
     ]
+
+    query.merge(accessQuery) { (current, _) in current }
       
     query = addAccessGroupWhenPresent(query)
     query = addSynchronizableIfRequired(query, addingItems: true)
@@ -119,18 +155,19 @@ open class KeychainSwift {
   - parameter key: Key under which the value is stored in the keychain.
   - parameter value: Boolean to be written to the keychain.
   - parameter withAccess: Value that indicates when your app needs access to the value in the keychain item. By default the .AccessibleWhenUnlocked option is used that permits the data to be accessed only while the device is unlocked by the user.
+  - parameter andBiometry: Set to true if entry should be encrypted using biometry.
 
   - returns: True if the value was successfully written to the keychain.
 
   */
   @discardableResult
   open func set(_ value: Bool, forKey key: String,
-    withAccess access: KeychainSwiftAccessOptions? = nil) -> Bool {
+    withAccess access: KeychainSwiftAccessOptions? = nil, andBiometry biometry: Bool = false) -> Bool {
   
     let bytes: [UInt8] = value ? [1] : [0]
     let data = Data(bytes)
 
-    return set(data, forKey: key, withAccess: access)
+    return set(data, forKey: key, withAccess: access, andBiometry: biometry)
   }
 
   /**
